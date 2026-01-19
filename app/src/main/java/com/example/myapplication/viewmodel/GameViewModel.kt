@@ -18,24 +18,19 @@ class GameViewModel : ViewModel() {
     }
 
     private fun loadLevel() {
-        // Hardcoded sample level based on the image provided
-        // Image shows numbers up to 8 on a grid (looks like 5x7 or 6x6)
-        // Let's go with 6x6 for now
-        val numbers = listOf(
-            NumberPoint(GridPos(0, 0), 1),
-            NumberPoint(GridPos(5, 5), 2),
-            NumberPoint(GridPos(1, 5), 3),
-            NumberPoint(GridPos(1, 2), 4),
-            NumberPoint(GridPos(5, 4), 5),
-            NumberPoint(GridPos(3, 4), 6),
-            NumberPoint(GridPos(5, 1), 7),
-            NumberPoint(GridPos(4, 2), 8)
-        )
+        val gridSize = 6
+        val numbers = com.example.myapplication.logic.LevelGenerator.generate(gridSize)
         
         _gameState.value = GridGameState(
-            gridSize = 6,
+            gridSize = gridSize,
             numberPoints = numbers,
-            nextTargetNumber = 1
+            nextTargetNumber = 1,
+            currentPath = emptyList(),
+            isWin = false,
+            history = emptyList(),
+            startTime = System.currentTimeMillis(),
+            endTime = 0L,
+            isDialogShown = false
         )
     }
 
@@ -44,9 +39,6 @@ class GameViewModel : ViewModel() {
         if (state.isWin) return
 
         val currentPath = state.currentPath
-        
-        // 0. Smoothness: If same cell as last, skip
-        if (currentPath.lastOrNull() == pos) return
 
         // 1. Backtracking: If cell is already in path, truncate path
         if (pos in currentPath) {
@@ -64,21 +56,28 @@ class GameViewModel : ViewModel() {
             return
         }
 
-        // 2. Start path if touched the next target number
+        // 2. Start path if touched number 1 (or any cell to start from number 1)
         if (currentPath.isEmpty()) {
-            val target = state.numberPoints.find { it.number == 1 }
-            if (target != null && target.pos == pos) {
+            // Check if this cell contains number 1
+            val number1Point = state.numberPoints.firstOrNull { it.number == 1 }
+            val isNumber1 = number1Point != null && number1Point.pos.x == pos.x && number1Point.pos.y == pos.y
+            
+            if (isNumber1) {
                 _gameState.value = state.copy(
                     currentPath = listOf(pos),
-                    nextTargetNumber = 1,
-                    history = state.history + listOf(currentPath)
+                    nextTargetNumber = 2,
+                    history = emptyList()
                 )
             }
             return
         }
 
-        // 3. Normal extension
+        // 3. Extend path (must be adjacent)
         val lastPos = currentPath.last()
+        
+        // Skip if same as last position
+        if (lastPos == pos) return
+        
         if (isAdjacent(lastPos, pos)) {
             val hitNumber = state.numberPoints.find { it.pos == pos }
             var nextTarget = state.nextTargetNumber
@@ -93,12 +92,17 @@ class GameViewModel : ViewModel() {
             }
 
             val updatedPath = currentPath + pos
-            val isWin = nextTarget == state.numberPoints.maxOf { it.number }
+            
+            // Win condition: all numbers connected AND all cells filled
+            val allNumbersConnected = nextTarget == state.numberPoints.maxOf { it.number }
+            val allCellsFilled = updatedPath.size == state.gridSize * state.gridSize
+            val isWin = allNumbersConnected && allCellsFilled
 
             _gameState.value = state.copy(
                 currentPath = updatedPath,
                 nextTargetNumber = nextTarget,
-                isWin = isWin
+                isWin = isWin,
+                endTime = if (isWin) System.currentTimeMillis() else state.endTime
             )
         }
     }
@@ -130,6 +134,19 @@ class GameViewModel : ViewModel() {
 
     fun reset() {
         loadLevel()
+    }
+
+    fun markDialogShown() {
+        _gameState.value = _gameState.value.copy(isDialogShown = true)
+    }
+
+    fun getElapsedTime(): Long {
+        val state = _gameState.value
+        return if (state.endTime > 0) {
+            state.endTime - state.startTime
+        } else {
+            0L
+        }
     }
 
     private fun isAdjacent(p1: GridPos, p2: GridPos): Boolean {

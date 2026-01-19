@@ -23,5 +23,8 @@ data class GridGameState(
     val nextTargetNumber: Int = 1,
     val score: Int = 0,
     val isWin: Boolean = false,
-    val history: List<List<GridPos>> = emptyList() // For Undo functionality
+    val history: List<List<GridPos>> = emptyList(), // For Undo functionality
+    val startTime: Long = 0L, // When the game started (in milliseconds)
+    val endTime: Long = 0L, // When the game was solved (in milliseconds)
+    val isDialogShown: Boolean = false // Whether the completion dialog has been shown
 )

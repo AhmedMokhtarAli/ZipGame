@@ -31,6 +31,26 @@ import com.example.myapplication.viewmodel.GameViewModel
 @Composable
 fun GameScreen(viewModel: GameViewModel) {
     val state by viewModel.gameState
+    
+    // Live timer state
+    var currentTime by androidx.compose.runtime.remember { androidx.compose.runtime.mutableLongStateOf(System.currentTimeMillis()) }
+    
+    // Update timer every 100ms while game is not won
+    androidx.compose.runtime.LaunchedEffect(state.isWin) {
+        if (!state.isWin) {
+            while (true) {
+                kotlinx.coroutines.delay(100)
+                currentTime = System.currentTimeMillis()
+            }
+        }
+    }
+    
+    // Calculate elapsed time
+    val elapsedTime = if (state.isWin) {
+        state.endTime - state.startTime
+    } else {
+        currentTime - state.startTime
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(Color(0xFFF5F5F5))) {
         Column(
@@ -47,7 +67,12 @@ fun GameScreen(viewModel: GameViewModel) {
                 color = Color(0xFF333333)
             )
             
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            // Live Timer Display
+            TimerDisplay(elapsedTime = elapsedTime, isWin = state.isWin)
+            
+            Spacer(modifier = Modifier.height(24.dp))
 
             // The Main Game Grid
             Box(
@@ -72,8 +97,12 @@ fun GameScreen(viewModel: GameViewModel) {
             }
         }
 
-        if (state.isWin) {
-            WinOverlay(onRestart = { viewModel.reset() })
+        if (state.isWin && !state.isDialogShown) {
+            WinOverlay(
+                elapsedTime = viewModel.getElapsedTime(),
+                onRestart = { viewModel.reset() },
+                onDismiss = { viewModel.markDialogShown() }
+            )
         }
     }
 }
@@ -98,18 +127,18 @@ fun GameGrid(state: GridGameState, onCellTouched: (GridPos) -> Unit) {
                 modifier = Modifier
                     .fillMaxSize()
                     .pointerInput(gridSize, sizePx) {
-                        if (sizePx > 0) {
-                            detectTapGestures { offset ->
-                                onCellTouched(getCell(offset, cellSizePx))
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val currentCellSize = sizePx / gridSize
+                                event.changes.forEach { change ->
+                                    val x = (change.position.x / currentCellSize).toInt().coerceIn(0, gridSize - 1)
+                                    val y = (change.position.y / currentCellSize).toInt().coerceIn(0, gridSize - 1)
+                                    val cell = GridPos(x, y)
+                                    onCellTouched(cell)
+                                    change.consume()
+                                }
                             }
-                        }
-                    }
-                    .pointerInput(gridSize, sizePx) {
-                        if (sizePx > 0) {
-                            detectDragGestures(
-                                onDragStart = { offset -> onCellTouched(getCell(offset, cellSizePx)) },
-                                onDrag = { change, _ -> onCellTouched(getCell(change.position, cellSizePx)) }
-                            )
                         }
                     }
             ) {
@@ -129,8 +158,10 @@ fun GameGrid(state: GridGameState, onCellTouched: (GridPos) -> Unit) {
                             lineTo(it.x * cellSizePx + cellSizePx / 2, it.y * cellSizePx + cellSizePx / 2)
                         }
                     }
-                    drawPath(path, Color(0xFFFF5722).copy(alpha = 0.2f), style = Stroke(cellSizePx * 0.8f, cap = StrokeCap.Round, join = StrokeJoin.Round))
-                    drawPath(path, Color(0xFFFF5722), style = Stroke(cellSizePx * 0.45f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                    // Use green color when solved, otherwise use orange
+                    val pathColor = if (state.isWin) Color(0xFF4CAF50) else Color(0xFFFF5722)
+                    drawPath(path, pathColor.copy(alpha = 0.2f), style = Stroke(cellSizePx * 0.8f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                    drawPath(path, pathColor, style = Stroke(cellSizePx * 0.45f, cap = StrokeCap.Round, join = StrokeJoin.Round))
                 }
             }
 
@@ -180,6 +211,24 @@ fun NumberNode(number: Int, isTarget: Boolean) {
 }
 
 @Composable
+fun TimerDisplay(elapsedTime: Long, isWin: Boolean) {
+    val seconds = (elapsedTime / 1000) % 60
+    val minutes = (elapsedTime / 1000) / 60
+    val timeText = if (minutes > 0) {
+        String.format("%02d:%02d", minutes, seconds)
+    } else {
+        String.format("%02d", seconds)
+    }
+    
+    Text(
+        text = timeText,
+        fontSize = 32.sp,
+        fontWeight = FontWeight.Bold,
+        color = if (isWin) Color(0xFF4CAF50) else Color(0xFF333333)
+    )
+}
+
+@Composable
 fun GameActionButton(text: String, onClick: () -> Unit) {
     Button(
         onClick = onClick,
@@ -193,7 +242,16 @@ fun GameActionButton(text: String, onClick: () -> Unit) {
 }
 
 @Composable
-fun WinOverlay(onRestart: () -> Unit) {
+fun WinOverlay(elapsedTime: Long, onRestart: () -> Unit, onDismiss: () -> Unit) {
+    // Format elapsed time
+    val seconds = (elapsedTime / 1000) % 60
+    val minutes = (elapsedTime / 1000) / 60
+    val timeText = if (minutes > 0) {
+        String.format("%d:%02d", minutes, seconds)
+    } else {
+        String.format("%d seconds", seconds)
+    }
+    
     Box(
         modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)),
         contentAlignment = Alignment.Center
@@ -209,8 +267,21 @@ fun WinOverlay(onRestart: () -> Unit) {
             ) {
                 Text("EXCELLENT!", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
                 Text("Board Cleared", color = Color.Gray)
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "Time: $timeText",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF4CAF50)
+                )
                 Spacer(modifier = Modifier.height(24.dp))
-                Button(onClick = onRestart, modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = {
+                        onDismiss()
+                        onRestart()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Text("PLAY AGAIN")
                 }
             }
@@ -219,8 +290,7 @@ fun WinOverlay(onRestart: () -> Unit) {
 }
 
 private fun getCell(offset: Offset, cellSizePx: Float): GridPos {
-    return GridPos(
-        (offset.x / cellSizePx).toInt(),
-        (offset.y / cellSizePx).toInt()
-    )
+    val x = (offset.x / cellSizePx).toInt().coerceIn(0, 5) // Max is gridSize - 1
+    val y = (offset.y / cellSizePx).toInt().coerceIn(0, 5) // Max is gridSize - 1
+    return GridPos(x, y)
 }
